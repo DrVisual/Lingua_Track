@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LinguaTrack — Учись словам с интервалами</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&family=Open+Sans&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Open Sans', sans-serif;
+            background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
+            color: white;
+            min-height: 100vh;
+        }
+        .navbar {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+        }
+        .hero {
+            padding: 100px 0;
+            text-align: center;
+        }
+        .hero h1 {
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 700;
+            font-size: 3.5rem;
+            text-shadow: 2px 2px 8px rgba(0,0,0,0.3);
+        }
+        .hero p {
+            font-size: 1.3rem;
+            max-width: 700px;
+            margin: 0 auto 30px;
+            opacity: 0.9;
+        }
+        .btn-cta {
+            font-size: 1.1rem;
+            padding: 12px 30px;
+            margin: 0 10px;
+            border-radius: 50px;
+            font-weight: 600;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        }
+        .btn-primary {
+            background: #ff6b6b;
+            border: none;
+        }
+        .btn-primary:hover {
+            background: #ee5253;
+            transform: translateY(-2px);
+            transition: all 0.3s;
+        }
+        .btn-outline-light {
+            border-color: white;
+            color: white;
+        }
+        .btn-outline-light:hover {
+            background: white;
+            color: #2575fc;
+            border-color: white;
+            transform: translateY(-2px);
+            transition: all 0.3s;
+        }
+        .features {
+            padding: 80px 0;
+            background: rgba(255, 255, 255, 0.05);
+        }
+        .feature-card {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 30px;
+            height: 100%;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            transition: transform 0.3s;
+        }
+        .feature-card:hover {
+            transform: translateY(-10px);
+        }
+        .feature-icon {
+            font-size: 3rem;
+            margin-bottom: 20px;
+            color: #ffd166;
+        }
+        footer {
+            text-align: center;
+            padding: 30px 0;
+            background: rgba(0, 0, 0, 0.2);
+            font-size: 0.9rem;
+            opacity: 0.8;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Навигация -->
+    <nav class="navbar navbar-expand-lg navbar-dark">
+        <div class="container">
+            <a class="navbar-brand fw-bold" href="/">LinguaTrack</a>
+            <div class="ms-auto">
+                <a href="{% url 'login' %}" class="btn btn-outline-light">Войти</a>
+                <a href="{% url 'cards:register' %}" class="btn btn-primary">Регистрация</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Главный экран -->
+    <section class="hero">
+        <div class="container">
+            <h1>Учись словам эффективно</h1>
+            <p>
+                Создавай карточки, повторяй по алгоритму интервального обучения и улучшай словарный запас с помощью Telegram-бота.
+            </p>
+            <div>
+                <a href="{% url 'cards:register' %}" class="btn btn-primary btn-cta">Начать учиться</a>
+                <a href="{% url 'login' %}" class="btn btn-outline-light btn-cta">Уже с нами</a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Преимущества -->
+    <section class="features">
+        <div class="container">
+            <h2 class="text-center mb-5">Почему LinguaTrack?</h2>
+            <div class="row g-4">
+                <div class="col-md-4">
+                    <div class="feature-card text-center">
+                        <div class="feature-icon">🔁</div>
+                        <h4>Интервальное повторение</h4>
+                        <p>Алгоритм SM-2 помогает запоминать слова надолго, показывая их в нужное время.</p>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="feature-card text-center">
+                        <div class="feature-icon">📱</div>
+                        <h4>Telegram-бот</h4>
+                        <p>Повторяй слова в боте — в метро, на прогулке, между делами.</p>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="feature-card text-center">
+                        <div class="feature-icon">🔊</div>
+                        <h4>Озвучка слов</h4>
+                        <p>Слушай произношение через Google TTS — учись правильно говорить.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Подвал -->
+    <footer>
+        <div class="container">
+            <p>© 2025 LinguaTrack — Проект для <strong>LexiLab</strong></p>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

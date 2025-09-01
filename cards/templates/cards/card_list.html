@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Мои карточки</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body class="bg-light">
+    <div class="container mt-5">
+
+        <!-- Заголовок -->
+        <h1>Мои карточки</h1>
+
+        <!-- Кнопки действий -->
+        <div class="mb-3">
+            <a href="{% url 'cards:review' %}" class="btn btn-info">Повторить слова</a>
+            <a href="{% url 'cards:add_card' %}" class="btn btn-success">+ Добавить карточку</a>
+            <form method="post" action="{% url 'logout' %}" style="display: inline;">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-outline-danger">Выйти</button>
+</form>
+        </div>
+
+        <!-- Фильтрация по уровню -->
+        <div class="mb-3">
+            <strong>Фильтр:</strong>
+            <div class="btn-group" role="group">
+                <a href="{% url 'cards:card_list' %}" class="btn btn-outline-secondary btn-sm">Все</a>
+                <a href="?level=beginner" class="btn btn-outline-info btn-sm">Начальный</a>
+                <a href="?level=intermediate" class="btn btn-outline-warning btn-sm">Средний</a>
+                <a href="?level=advanced" class="btn btn-outline-danger btn-sm">Продвинутый</a>
+                <a href="{% url 'cards:export_cards' %}" class="btn btn-outline-success">📤 Экспорт в JSON</a>
+                <a href="{% url 'cards:import_cards' %}" class="btn btn-outline-info">📥 Импорт из JSON</a>
+            </div>
+        </div>
+
+        <!-- Уведомление о словах на повторении -->
+        {% if due_cards %}
+            <div class="alert alert-warning mt-3">
+                🔔 У тебя <strong>{{ due_count }}</strong> слов(а) на повторении сегодня. 
+                <a href="{% url 'cards:review' %}" class="alert-link">Перейти к повторению</a>
+            </div>
+        {% endif %}
+
+        <!-- Таблица карточек -->
+        {% if cards %}
+            <table class="table table-striped table-hover">
+                <thead class="table-light">
+                    <tr>
+                        <th>Слово</th>
+                        <th>Перевод</th>
+                        <th>Уровень</th>
+                        <th>Дата создания</th>
+                        <th>Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for card in cards %}
+                        <tr>
+                            <td>{{ card.word }}</td>
+                            <td>{{ card.translation }}</td>
+                            <td>
+                                {% if card.level == 'beginner' %}
+                                    <span class="badge bg-info">Начальный</span>
+                                {% elif card.level == 'intermediate' %}
+                                    <span class="badge bg-warning text-dark">Средний</span>
+                                {% elif card.level == 'advanced' %}
+                                    <span class="badge bg-danger">Продвинутый</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ card.created_at|date:"d.m.Y" }}</td>
+                            <td>
+                                <a href="{% url 'cards:edit_card' card.id %}" class="btn btn-sm btn-warning">Редактировать</a>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <div class="alert alert-info">
+                У тебя пока нет карточек. 
+                <a href="{% url 'cards:add_card' %}" class="alert-link">Добавьте первую!</a>
+            </div>
+        {% endif %}
+
+        <!-- Рекомендации -->
+        {% if cards %}
+            <div class="card mt-4 shadow-sm">
+                <div class="card-body">
+                    <h5 class="card-title">🎯 Рекомендации</h5>
+
+                    {% if due_count > 0 %}
+                        <p class="text-danger"><strong>🔔 Повтори сегодня:</strong> {{ due_count }} слов</p>
+                    {% else %}
+                        <p class="text-success"><strong>✅ Все повторения выполнены!</strong></p>
+                    {% endif %}
+
+                    <p><strong>Твой прогресс:</strong></p>
+                    <ul class="list-unstyled">
+                        <li>• Всего: {{ total_cards }}</li>
+                        <li>• Начальный: {{ beginner_count }}</li>
+                        <li>• Средний: {{ intermediate_count }}</li>
+                        <li>• Продвинутый: {{ advanced_count }}</li>
+                    </ul>
+
+                    <p><strong>Рекомендуем:</strong></p>
+                    {% if advanced_count == 0 and total_cards > 5 %}
+                        <small class="text-muted">Начни изучать продвинутые слова!</small>
+                    {% elif intermediate_count < beginner_count and total_cards > 10 %}
+                        <small class="text-muted">Удели больше внимания среднему уровню.</small>
+                    {% else %}
+                        <small class="text-muted">Ты на правильном пути!</small>
+                    {% endif %}
+                </div>
+            </div>
+        {% endif %}
+
+    </div>
+</body>
+</html>
