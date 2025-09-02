@@ -1,3 +1,5 @@
+# cards/models.py
+
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
@@ -9,6 +11,7 @@ LEVEL_CHOICES = [
     ('intermediate', 'Средний'),
     ('advanced', 'Продвинутый'),
 ]
+
 
 class Card(models.Model):
     word = models.CharField("Слово", max_length=200)
@@ -31,7 +34,7 @@ class Schedule(models.Model):
     card = models.OneToOneField(Card, on_delete=models.CASCADE, verbose_name="Карточка")
     next_review = models.DateTimeField("Следующее повторение", default=timezone.now)
     ease_factor = models.FloatField("Фактор лёгкости", default=2.5)
-    interval = models.IntegerField("Интервал (дни)", default=0)
+    interval = models.IntegerField("Интервал (дни)", default=1)
     repetitions = models.IntegerField("Число повторений", default=0)
 
     def __str__(self):
@@ -41,28 +44,30 @@ class Schedule(models.Model):
         verbose_name = "Расписание"
         verbose_name_plural = "Расписание повторений"
 
-    def update_schedule(self, quality):
-        # Минимальное качество для увеличения интервала
-        if quality >= 3:
-            if self.repetitions == 0:
-                self.interval = 1
-            elif self.repetitions == 1:
-                self.interval = 6
-            else:
-                self.interval = int(self.interval * self.ease_factor)
-
-            self.repetitions += 1
+    def update_schedule(self, difficulty):
+        """
+        Обновляет расписание по SM-2 и сохраняет в БД.
+        """
+        if difficulty == 'hard':
+            self.interval = max(1, int(self.interval * 1.2))
+        elif difficulty == 'good':
+            self.interval = int(self.interval * 2.5)
+        elif difficulty == 'easy':
+            self.interval = int(self.interval * 3.5)
         else:
-            self.repetitions = 0
             self.interval = 1
 
-        # Обновляем фактор лёгкости
-        self.ease_factor = self.ease_factor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
-        if self.ease_factor < 1.3:
-            self.ease_factor = 1.3
+        if difficulty == 'hard':
+            self.ease_factor = max(1.3, self.ease_factor - 0.2)
+        elif difficulty == 'good':
+            self.ease_factor = max(1.3, self.ease_factor + 0.1)
+        elif difficulty == 'easy':
+            self.ease_factor = max(1.3, self.ease_factor + 0.3)
 
-        # Вычисляем дату следующего повторения
+        self.repetitions += 1
         self.next_review = timezone.now() + timedelta(days=self.interval)
+
+        # ✅ Сохраняем изменения
         self.save()
 
 

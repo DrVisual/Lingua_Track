@@ -1,56 +1,62 @@
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Повторение слов</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 </head>
 <body class="bg-light">
     <div class="container mt-5">
-        <h1>Слова на сегодня</h1>
+        <h1 class="mb-4">Повторение слов</h1>
 
-        {% if cards %}
-            {% for card in cards %}
-                <div class="card mb-4">
-                    <div class="card-body">
-                        <h5 class="card-title">{{ card.word }}</h5>
-                        <p class="text-muted">Уровень: {{ card.get_level_display }}</p>
+        {% if card %}
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <!-- Слово -->
+                    <h3 class="card-title">{{ card.word }}</h3>
 
-                        <form method="post" action="{% url 'cards:process_review' card.id %}">
-                            {% csrf_token %}
-                            <input type="hidden" name="quality" value="0">
-                            <button type="submit" class="btn btn-danger btn-sm">Забыл</button>
-                        </form>
+                    <!-- Кнопка "Показать перевод" -->
+                    <div id="translation" class="text-muted mb-3" style="display: none;">
+                        <strong>Перевод:</strong> {{ card.translation }}
+                    </div>
+                    <button class="btn btn-outline-secondary btn-sm mb-3" onclick="showTranslation()">
+                        Показать перевод
+                    </button>
 
-                        <form method="post" action="{% url 'cards:process_review' card.id %}" class="d-inline">
-                            {% csrf_token %}
-                            <input type="hidden" name="quality" value="2">
-                            <button type="submit" class="btn btn-warning btn-sm">Трудно</button>
-                        </form>
+                    <!-- Уровень -->
+                    <p class="text-muted small">
+                        <strong>Уровень:</strong> {{ card.get_level_display }}
+                    </p>
 
-                        <form method="post" action="{% url 'cards:process_review' card.id %}" class="d-inline">
-                            {% csrf_token %}
-                            <input type="hidden" name="quality" value="4">
-                            <button type="submit" class="btn btn-success btn-sm">Хорошо</button>
-                        </form>
-
-                        <form method="post" action="{% url 'cards:process_review' card.id %}" class="d-inline">
-                            {% csrf_token %}
-                            <input type="hidden" name="quality" value="5">
-                            <button type="submit" class="btn btn-primary btn-sm">Легко</button>
-                        </form>
+                    <!-- Кнопки оценки -->
+                    <div class="mt-4">
+                        <a href="{% url 'cards:review_answer' card.id 'hard' %}" class="btn btn-danger btn-sm">🔴 Забыл</a>
+                        <a href="{% url 'cards:review_answer' card.id 'good' %}" class="btn btn-warning btn-sm mx-1">🟡 Сложно</a>
+                        <a href="{% url 'cards:review_answer' card.id 'easy' %}" class="btn btn-success btn-sm">🟢 Легко</a>
                     </div>
                 </div>
-            {% endfor %}
-        {% else %}
-            <div class="alert alert-success">
-                <h4>Отлично!</h4>
-                <p>Сегодня нет слов для повторения. Отдохни 😊</p>
             </div>
-            <a href="{% url 'cards:card_list' %}" class="btn btn-secondary">К списку карточек</a>
-        {% endif %}
 
-        <hr>
-        <a href="{% url 'cards:card_list' %}" class="btn btn-outline-secondary">Назад</a>
+            <hr class="my-4">
+            <a href="{% url 'cards:card_list' %}" class="btn btn-outline-secondary">Назад к карточкам</a>
+        {% else %}
+            <!-- Нет слов на повторении -->
+            <div class="alert alert-success text-center">
+                <h4>🎉 Отлично!</h4>
+                <p>Сегодня нет слов для повторения. Отдохни 😊</p>
+                <a href="{% url 'cards:card_list' %}" class="btn btn-primary">К списку карточек</a>
+            </div>
+        {% endif %}
     </div>
+
+    <!-- Скрипт для показа перевода -->
+    <script>
+        function showTranslation() {
+            document.getElementById('translation').style.display = 'block';
+        }
+    </script>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>

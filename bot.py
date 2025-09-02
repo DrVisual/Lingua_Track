@@ -1,47 +1,51 @@
 import os
 import asyncio
-import re
-from datetime import time, timedelta
+from datetime import timedelta, time
+
+# --- Разрешаем unsafe-доступ к Django ORM (только для локального бота!) ---
+os.environ["DJANGO_ALLOW_ASYNC_UNSAFE"] = "true"
 
 import django
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, FSInputFile
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from asgiref.sync import sync_to_async
 from django.conf import settings
 from django.utils import timezone
-from django.utils.timezone import localtime
 from dotenv import load_dotenv
 from gtts import gTTS
-import random
 
-# Настройка Django
+# --- Установка event loop для Windows ---
+try:
+    from asyncio import WindowsSelectorEventLoopPolicy
+    asyncio.set_event_loop_policy(WindowsSelectorEventLoopPolicy())
+except Exception:
+    pass
+
+# --- Настройка Django ---
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
 django.setup()
 
-# Загрузка переменных окружения
+# --- Загрузка токена ---
 load_dotenv()
-
-# Проверка токена
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 if not TOKEN:
-    raise ValueError("Токен Telegram не найден в .env")
+    raise ValueError("TELEGRAM_BOT_TOKEN не найден в .env")
 
-# Создание бота и диспетчера
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# Импорт моделей (после django.setup())
+# --- Импорт моделей после django.setup() ---
 from django.contrib.auth.models import User
 from cards.models import Card, Schedule, UserStats
 
 
-# --- КЛАВИАТУРА ---
+# --- Клавиатура ---
 def get_main_keyboard():
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="/today"), KeyboardButton(text="/test")],
+            [KeyboardButton(text="/match"), KeyboardButton(text="/review")],
             [KeyboardButton(text="/progress"), KeyboardButton(text="/cards")],
             [KeyboardButton(text="/help")]
         ],
@@ -49,56 +53,70 @@ def get_main_keyboard():
     )
 
 
-# --- ОСНОВНЫЕ КОММАНДЫ ---
-
+# --- /start — с автоматическим /help ---
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     user_id = message.from_user.id
-
     try:
-        user_stats = await sync_to_async(UserStats.objects.get)(telegram_id=user_id)
-        await message.answer("С возвращением! Я тебя помню 😊")
+        user_stats = UserStats.objects.get(telegram_id=user_id)
+        await message.answer("С возвращением! Я тебя помню 😊", reply_markup=get_main_keyboard())
+        await cmd_help(message)
     except UserStats.DoesNotExist:
         try:
-            user = await sync_to_async(User.objects.first)()
+            user = User.objects.first()
             if not user:
                 await message.answer("Ошибка: нет пользователей в системе.")
                 return
 
-            user_stats, created = await sync_to_async(UserStats.objects.get_or_create)(
+            user_stats, created = UserStats.objects.get_or_create(
                 user=user,
                 defaults={'telegram_id': user_id}
             )
             if not created:
                 user_stats.telegram_id = user_id
-                await sync_to_async(user_stats.save)()
+                user_stats.save()
 
             await message.answer(
                 f"Привет, {message.from_user.first_name}! 👋\n"
                 "Я связал тебя с твоим аккаунтом в LinguaTrack.\n"
-                "Теперь ты можешь учить слова в боте!"
+                "Теперь ты можешь учить слова в боте!",
+                reply_markup=get_main_keyboard()
             )
+            await cmd_help(message)
         except Exception as e:
-            await message.answer("Ошибка подключения к базе. Попробуй позже.")
+            await message.answer("Ошибка подключения к базе.")
             print(e)
 
+
+# --- /help ---
+@dp.message(Command("help"))
+async def cmd_help(message: types.Message):
     await message.answer(
-        "Готов помочь! Используй команды ниже:",
-        reply_markup=get_main_keyboard()
+        "📚 Доступные команды:\n"
+        "  /today — слова на сегодня\n"
+        "  /test — пройти тест\n"
+        "  /match — игра \"Сопоставление\"\n"
+        "  /review — повторить слова\n"
+        "  /progress — мой прогресс\n"
+        "  /cards — мои карточки\n"
+        "  /add — добавить карточку\n"
+        "  /edit — изменить карточку\n"
+        "  /delete — удалить карточку\n"
+        "  /say <слово> — озвучить слово\n"
+        "  /set_reminder — установить время напоминаний\n"
+        "  /help — эта подсказка"
     )
 
 
+# --- /today — слова на повторении ---
 @dp.message(Command("today"))
 async def cmd_today(message: types.Message):
     user_id = message.from_user.id
-
     try:
-        user_stats = await sync_to_async(
-            UserStats.objects.select_related('user').get
-        )(telegram_id=user_id)
+        user_stats = UserStats.objects.select_related('user').get(telegram_id=user_id)
         user = user_stats.user
 
-        due_cards = await sync_to_async(list)(
+        due_cards = list(
             Card.objects.filter(
                 owner=user,
                 schedule__next_review__lte=timezone.now()
@@ -112,47 +130,42 @@ async def cmd_today(message: types.Message):
             await message.answer(response, parse_mode="Markdown")
         else:
             await message.answer("🎉 Сегодня нет слов для повторения!")
-    except UserStats.DoesNotExist:
-        await message.answer("Ты не привязан к аккаунту. Напиши /start")
+    except Exception as e:
+        await message.answer("Ошибка при загрузке слов.")
+        print(f"Ошибка /today: {e}")
 
 
+# --- /progress — статистика ---
 @dp.message(Command("progress"))
 async def cmd_progress(message: types.Message):
     user_id = message.from_user.id
-
     try:
-        user_stats = await sync_to_async(
-            UserStats.objects.select_related('user').get
-        )(telegram_id=user_id)
+        user_stats = UserStats.objects.select_related('user').get(telegram_id=user_id)
         user = user_stats.user
 
-        total = await sync_to_async(Card.objects.filter(owner=user).count)()
-        learned = await sync_to_async(
-            Card.objects.filter(owner=user, schedule__repetitions__gte=3).count
-        )()
+        total = Card.objects.filter(owner=user).count()
+        learned = Card.objects.filter(owner=user, schedule__repetitions__gte=3).count()
 
         await message.answer(
             f"📊 Твой прогресс:\n"
             f"Всего карточек: {total}\n"
             f"Выучено слов: {learned}\n"
-            f"Серия повторений: {user_stats.review_streak}\n"
-            f"Последнее повторение: {user_stats.last_reviewed.strftime('%d.%m.%Y') if user_stats.last_reviewed else '—'}"
+            f"Серия повторений: {user_stats.review_streak}"
         )
-    except UserStats.DoesNotExist:
-        await message.answer("Ты не привязан к аккаунту. Напиши /start")
+    except Exception as e:
+        await message.answer("Ошибка при загрузке статистики.")
+        print(f"Ошибка /progress: {e}")
 
 
+# --- /cards — список карточек ---
 @dp.message(Command("cards"))
 async def cmd_cards(message: types.Message):
     user_id = message.from_user.id
-
     try:
-        user_stats = await sync_to_async(
-            UserStats.objects.select_related('user').get
-        )(telegram_id=user_id)
+        user_stats = UserStats.objects.select_related('user').get(telegram_id=user_id)
         user = user_stats.user
 
-        cards = await sync_to_async(list)(Card.objects.filter(owner=user)[:10])
+        cards = list(Card.objects.filter(owner=user)[:10])
 
         if cards:
             response = "Твои карточки (первые 10):\n\n"
@@ -160,11 +173,13 @@ async def cmd_cards(message: types.Message):
                 response += f"• *{card.word}* → {card.translation}\n"
             await message.answer(response, parse_mode="Markdown")
         else:
-            await message.answer("У тебя пока нет карточек. Добавь в веб-версии!")
-    except UserStats.DoesNotExist:
-        await message.answer("Ты не привязан к аккаунту. Напиши /start")
+            await message.answer("У тебя пока нет карточек.")
+    except Exception as e:
+        await message.answer("Ошибка при загрузке карточек.")
+        print(f"Ошибка /cards: {e}")
 
 
+# --- /say — озвучка слова ---
 @dp.message(Command("say"))
 async def cmd_say(message: types.Message):
     text = message.text.split(' ', 1)
@@ -187,88 +202,103 @@ async def cmd_say(message: types.Message):
         await message.answer_voice(voice, caption=f"🔊 *{word}*", parse_mode="Markdown")
     except Exception as e:
         await message.answer(f"Не удалось озвучить слово: {e}")
-        print(e)
     finally:
         if os.path.exists(audio_path):
             os.remove(audio_path)
 
 
-# --- ТЕСТ С ВЫБОРОМ ---
+# --- Редактор карточек ---
+@dp.message(Command("add"))
+async def cmd_add(message: types.Message):
+    await message.answer("Отправь: `слово | перевод | пример | примечание | уровень`")
+    if not hasattr(bot, 'waiting_for'):
+        bot.waiting_for = {}
+    bot.waiting_for[message.from_user.id] = 'add_card'
 
+
+@dp.message(Command("edit"))
+async def cmd_edit(message: types.Message):
+    await message.answer("Напиши слово, которое хочешь изменить.")
+    if not hasattr(bot, 'waiting_for'):
+        bot.waiting_for = {}
+    bot.waiting_for[message.from_user.id] = 'edit_word'
+
+
+@dp.message(Command("delete"))
+async def cmd_delete(message: types.Message):
+    await message.answer("Напиши слово, которое хочешь удалить.")
+    if not hasattr(bot, 'waiting_for'):
+        bot.waiting_for = {}
+    bot.waiting_for[message.from_user.id] = 'delete_word'
+
+
+# --- /test — тест с карточками ---
 @dp.message(Command("test"))
 async def cmd_test(message: types.Message):
     user_id = message.from_user.id
     try:
-        # Получаем пользователя
-        user_stats = await sync_to_async(UserStats.objects.get)(telegram_id=user_id)
+        user_stats = UserStats.objects.get(telegram_id=user_id)
         user = user_stats.user
 
-        # Получаем карточки
-        cards = await sync_to_async(list)(Card.objects.filter(owner=user))
+        cards = list(Card.objects.filter(owner=user))
         if len(cards) < 4:
-            await message.answer("Нужно хотя бы 4 слова, чтобы пройти тест.")
+            await message.answer("Нужно хотя бы 4 слова.")
             return
 
-        # Перемешиваем
+        import random
         random.shuffle(cards)
         card = cards[0]
-        options = [card.translation] + [c.translation for c in cards[1:4]]
+        options = [card.translation] + [c.translation for c in random.sample(cards[1:], 3)]
         random.shuffle(options)
 
-        # Сохраняем правильный ответ
         if not hasattr(bot, 'test_data'):
             bot.test_data = {}
         bot.test_data[user_id] = card.translation
 
-        # Клавиатура
         keyboard = ReplyKeyboardMarkup(
-            keyboard=[
-                [KeyboardButton(text=options[0])],
-                [KeyboardButton(text=options[1])],
-                [KeyboardButton(text=options[2])],
-                [KeyboardButton(text=options[3])],
-            ],
+            keyboard=[[KeyboardButton(text=opt)] for opt in options],
             resize_keyboard=True,
             one_time_keyboard=True
         )
 
         await message.answer(
-            f"🎯 Тест: что означает слово *{card.word}*?",
+            f"🎯 Тест: что означает *{card.word}*?",
             reply_markup=keyboard,
             parse_mode="Markdown"
         )
     except Exception as e:
         await message.answer("Ошибка при запуске теста.")
-        print(e)
+        print(f"Ошибка /test: {e}")
 
 
+# --- Ответ на тест ---
 @dp.message(lambda m: hasattr(bot, 'test_data') and m.from_user.id in bot.test_data)
 async def handle_test_answer(message: types.Message):
     user_id = message.from_user.id
     correct = bot.test_data[user_id]
 
     if message.text == correct:
-        await message.answer("✅ Правильно! Молодец!", reply_markup=get_main_keyboard())
+        await message.answer("✅ Правильно!", reply_markup=get_main_keyboard())
     else:
-        await message.answer(f"❌ Неверно. Правильный ответ: *{correct}*", parse_mode="Markdown", reply_markup=get_main_keyboard())
+        await message.answer(f"❌ Правильно: *{correct}*", parse_mode="Markdown", reply_markup=get_main_keyboard())
 
     del bot.test_data[user_id]
 
 
-# --- СОПОСТАВЛЕНИЕ СЛОВ И ПЕРЕВОДОВ ---
-
+# --- /match — игра ---
 @dp.message(Command("match"))
 async def cmd_match(message: types.Message):
     user_id = message.from_user.id
     try:
-        user_stats = await sync_to_async(UserStats.objects.get)(telegram_id=user_id)
+        user_stats = UserStats.objects.get(telegram_id=user_id)
         user = user_stats.user
 
-        cards = await sync_to_async(list)(Card.objects.filter(owner=user))
+        cards = list(Card.objects.filter(owner=user))
         if len(cards) < 2:
-            await message.answer("Нужно хотя бы 2 слова, чтобы сыграть.")
+            await message.answer("Нужно хотя бы 2 слова.")
             return
 
+        import random
         random.shuffle(cards)
         sample = cards[:4]
 
@@ -284,28 +314,22 @@ async def cmd_match(message: types.Message):
         random.shuffle(options)
 
         keyboard = ReplyKeyboardMarkup(
-            keyboard=[
-                [KeyboardButton(text=f"{words[0]} → {options[0]}")],
-                [KeyboardButton(text=f"{words[0]} → {options[1]}")],
-                [KeyboardButton(text=f"{words[0]} → {options[2]}")],
-                [KeyboardButton(text=f"{words[0]} → {options[3]}")],
-            ],
+            keyboard=[[KeyboardButton(text=f"{words[0]} → {opt}")] for opt in options],
             resize_keyboard=True,
             one_time_keyboard=True
         )
 
         await message.answer(
-            f"🧠 Сопоставь слово с переводом:\n\n"
-            f"Слово: *{words[0]}*\n"
-            f"Выбери правильный перевод:",
+            f"🧠 Сопоставь: *{words[0]}*",
             reply_markup=keyboard,
             parse_mode="Markdown"
         )
     except Exception as e:
         await message.answer("Ошибка при запуске игры.")
-        print(e)
+        print(f"Ошибка /match: {e}")
 
 
+# --- Ответ на игру ---
 @dp.message(lambda m: '→' in m.text and m.text.count('→') == 1)
 async def handle_match_answer(message: types.Message):
     user_id = message.from_user.id
@@ -313,196 +337,165 @@ async def handle_match_answer(message: types.Message):
         return
 
     try:
-        word, given_translation = [part.strip() for part in message.text.split('→')]
+        word, given = [part.strip() for part in message.text.split('→')]
     except:
         return
 
-    correct_translation = bot.match_data[user_id].get(word)
-    if not correct_translation:
-        await message.answer("Не удалось проверить ответ.")
+    correct = bot.match_data[user_id].get(word)
+    if not correct:
+        await message.answer("Ошибка проверки.")
         return
 
-    if given_translation == correct_translation:
-        result = "✅ Правильно!"
-    else:
-        result = f"❌ Неверно. Правильно: *{correct_translation}*"
-
+    result = "✅ Правильно!" if given == correct else f"❌ Правильно: *{correct}*"
     await message.answer(result, reply_markup=get_main_keyboard(), parse_mode="Markdown")
     del bot.match_data[user_id]
 
 
-# --- НАПОМИНАНИЯ ---
-
-@dp.message(Command("remind_at"))
-async def cmd_remind_at(message: types.Message):
+# --- /review — повторение ---
+@dp.message(Command("review"))
+async def cmd_review(message: types.Message):
     user_id = message.from_user.id
-    text = message.text.strip()
-
-    match = re.search(r'(\d{1,2})[:\s](\d{2})', text)
-    if not match:
-        await message.answer(
-            "Укажи время в формате ЧЧ:ММ. Например:\n"
-            "  /remind_at 20:30\n"
-            "  /remind_at 9:00"
-        )
-        return
-
     try:
-        hour = int(match.group(1))
-        minute = int(match.group(2))
+        user_stats = UserStats.objects.get(telegram_id=user_id)
+        user = user_stats.user
 
-        if hour < 0 or hour > 23 or minute < 0 or minute > 59:
-            await message.answer("Время некорректно. Укажи от 00:00 до 23:59.")
+        due_cards = list(
+            Card.objects.filter(
+                owner=user,
+                schedule__next_review__lte=timezone.now()
+            )
+        )
+
+        if not due_cards:
+            await message.answer("🎉 Сегодня нет слов для повторения!")
             return
 
-        user_time = time(hour=hour, minute=minute)
+        card = due_cards[0]
+        if not hasattr(bot, 'review_data'):
+            bot.review_data = {}
+        bot.review_data[user_id] = {'card_id': card.id, 'word': card.word}
 
-        try:
-            user_stats = await sync_to_async(UserStats.objects.get)(telegram_id=user_id)
-            user_stats.reminder_time = user_time
-            await sync_to_async(user_stats.save)()
-
-            await message.answer(
-                f"✅ Время напоминания установлено: {user_time.strftime('%H:%M')}\n"
-                "Теперь каждый день в это время я буду напоминать повторять слова!"
-            )
-        except UserStats.DoesNotExist:
-            await message.answer("Сначала напиши /start")
-    except Exception as e:
-        await message.answer("Не удалось установить время. Попробуй снова.")
-        print(e)
-
-
-async def send_daily_reminders():
-    """Отправляет напоминания в индивидуальное время"""
-    try:
-        now = timezone.now()
-        local_now = localtime(now)
-        current_time = time(local_now.hour, local_now.minute)
-
-        user_stats_list = await sync_to_async(list)(
-            UserStats.objects.select_related('user')
-            .exclude(telegram_id__isnull=True)
-            .filter(reminder_time=current_time)
+        keyboard = ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="🔴 Забыл")],
+                [KeyboardButton(text="🟡 Сложно")],
+                [KeyboardButton(text="🟢 Легко")]
+            ],
+            resize_keyboard=True,
+            one_time_keyboard=True
         )
-
-        for user_stats in user_stats_list:
-            user = user_stats.user
-            due_count = await sync_to_async(
-                Card.objects.filter(
-                    owner=user,
-                    schedule__next_review__lte=now
-                ).count
-            )()
-
-            if due_count > 0:
-                try:
-                    await bot.send_message(
-                        chat_id=user_stats.telegram_id,
-                        text=(
-                            f"🔔 Напоминание!\n"
-                            f"У тебя **{due_count} слов(а)** на повторение.\n"
-                            f"Не забудь повторить — иначе прогресс сбросится!\n\n"
-                            f"👉 /today — начать повторение"
-                        ),
-                        parse_mode="Markdown"
-                    )
-                except Exception as e:
-                    print(f"❌ Ошибка отправки {user_stats.telegram_id}: {e}")
-
-    except Exception as e:
-        print(f"🚨 Ошибка в send_daily_reminders: {e}")
-
-
-# --- ДОПОЛНИТЕЛЬНЫЕ КОМАНДЫ ---
-
-@dp.message(Command("reschedule"))
-async def cmd_reschedule(message: types.Message):
-    text = message.text.split()
-    if len(text) < 3:
-        await message.answer("Используй: /reschedule <слово> через <N> дней")
-        return
-
-    word = text[1]
-    try:
-        days = int(text[3])
-    except (ValueError, IndexError):
-        await message.answer("Укажи число дней после 'через'")
-        return
-
-    user_id = message.from_user.id
-    try:
-        user_stats = await sync_to_async(UserStats.objects.get)(telegram_id=user_id)
-        user = user_stats.user
-        card = await sync_to_async(Card.objects.get)(owner=user, word__iexact=word)
-        schedule = card.schedule
-        schedule.next_review = timezone.now() + timedelta(days=days)
-        await sync_to_async(schedule.save)()
-        await message.answer(f"✅ Слово *{word}* перенесено на повторение через {days} дней.", parse_mode="Markdown")
-    except Card.DoesNotExist:
-        await message.answer("Слово не найдено.")
-    except Exception as e:
-        await message.answer("Ошибка при переносе.")
-        print(e)
-
-
-@dp.message(Command("help"))
-async def cmd_help(message: types.Message):
-    await message.answer(
-        "📚 Доступные команды:\n"
-        "  /start — начать\n"
-        "  /today — слова на сегодня\n"
-        "  /test — пройти тест\n"
-        "  /match — сопоставление слов\n"
-        "  /progress — мой прогресс\n"
-        "  /say <слово> — озвучить\n"
-        "  /cards — список карточек\n"
-        "  /remind_at ЧЧ:ММ — установить напоминание\n"
-        "  /reschedule <слово> через N дней — перенести повторение\n"
-        "  /help — эта подсказка"
-    )
-
-
-@dp.message(Command("debug_time"))
-async def cmd_debug_time(message: types.Message):
-    now = timezone.now()
-    local_now = localtime(now)
-    await message.answer(
-        f"🌍 UTC: {now.strftime('%H:%M:%S')}\n"
-        f"⏰ Local: {local_now.strftime('%H:%M:%S')}\n"
-        f"⚙️ TIME_ZONE: {settings.TIME_ZONE}"
-    )
-
-
-@dp.message(Command("debug_user"))
-async def cmd_debug_user(message: types.Message):
-    user_id = message.from_user.id
-    try:
-        user_stats = await sync_to_async(UserStats.objects.get)(telegram_id=user_id)
-        reminder_time = user_stats.reminder_time
-        now = timezone.now()
-        local_now = localtime(now)
-        current_time = time(local_now.hour, local_now.minute)
 
         await message.answer(
-            f"📱 Твой Telegram ID: {user_id}\n"
-            f"🔔 Время напоминания: {reminder_time}\n"
-            f"🕒 Текущее локальное время: {current_time}\n"
-            f"📅 Совпадает? {reminder_time == current_time}"
+            f"🔁 Повторение:\n\n**{card.word}**?",
+            reply_markup=keyboard,
+            parse_mode="Markdown"
         )
-    except UserStats.DoesNotExist:
-        await message.answer("Не найден в базе. Напиши /start")
+    except Exception as e:
+        await message.answer("Ошибка при загрузке слов.")
+        print(f"Ошибка /review: {e}")
 
 
-# --- ЗАПУСК БОТА ---
+# --- Обработка ответа на повторение ---
+@dp.message(lambda m: m.text in ["🔴 Забыл", "🟡 Сложно", "🟢 Легко"])
+async def handle_review_answer(message: types.Message):
+    user_id = message.from_user.id
+    if not hasattr(bot, 'review_data') or user_id not in bot.review_data:
+        return
 
+    data = bot.review_data[user_id]
+    try:
+        card = Card.objects.get(id=data['card_id'])
+        schedule = card.schedule
+
+        difficulty = 'hard' if message.text == "🔴 Забыл" \
+            else 'good' if message.text == "🟡 Сложно" else 'easy'
+
+        # Прямо вызываем — без sync_to_async
+        schedule.update_schedule(difficulty)
+        schedule.save()
+
+        user_stats = UserStats.objects.get(telegram_id=user_id)
+        user_stats.review_streak += 1
+        user_stats.last_reviewed = timezone.now()
+        user_stats.save()
+
+        del bot.review_data[user_id]
+        await message.answer("✅ Готово!", reply_markup=get_main_keyboard())
+    except Exception as e:
+        await message.answer("Ошибка при обработке ответа.")
+        print(f"Ошибка в handle_review_answer: {e}")
+
+
+# --- /set_reminder — установка времени напоминаний ---
+@dp.message(Command("set_reminder"))
+async def cmd_set_reminder(message: types.Message):
+    await message.answer("Напиши время в формате `ЧЧ:ММ` (например, `09:00`).")
+    if not hasattr(bot, 'waiting_for'):
+        bot.waiting_for = {}
+    bot.waiting_for[message.from_user.id] = 'set_reminder_time'
+
+
+# --- Обработка времени ---
+@dp.message()
+async def handle_reminder_time(message: types.Message):
+    if not hasattr(bot, 'waiting_for') or message.from_user.id not in bot.waiting_for:
+        return
+
+    if bot.waiting_for[message.from_user.id] != 'set_reminder_time':
+        return
+
+    try:
+        time_str = message.text.strip()
+        hours, minutes = map(int, time_str.split(':'))
+        reminder_time = time(hour=hours, minute=minutes)
+
+        user_stats = UserStats.objects.get(telegram_id=message.from_user.id)
+        user_stats.reminder_time = reminder_time
+        user_stats.save()
+
+        await message.answer(f"✅ Напоминания установлены на {time_str}.")
+        del bot.waiting_for[message.from_user.id]
+    except Exception:
+        await message.answer("Неверный формат. Используй `ЧЧ:ММ`.")
+
+
+# --- Логирование активных пользователей ---
+@dp.message()
+async def log_user(message: types.Message):
+    if not hasattr(bot, 'active_users'):
+        bot.active_users = set()
+    bot.active_users.add(message.from_user.id)
+
+
+# --- Напоминания ---
+async def send_local_reminders():
+    if not hasattr(bot, 'active_users') or not bot.active_users:
+        return
+
+    now = timezone.now().time()
+    for user_id in list(bot.active_users):
+        try:
+            user_stats = UserStats.objects.get(telegram_id=user_id)
+            if user_stats.reminder_time:
+                if (user_stats.reminder_time.hour == now.hour and
+                        abs(user_stats.reminder_time.minute - now.minute) < 2):
+                    await bot.send_message(
+                        chat_id=user_id,
+                        text="🔔 *Напоминание!* ⏰\n"
+                             "Не забудь повторить слова сегодня!\n\n"
+                             "📌 /today — начать повторение",
+                        parse_mode="Markdown"
+                    )
+        except Exception as e:
+            print(f"❌ Не удалось отправить напоминание {user_id}: {e}")
+
+
+# --- Запуск бота ---
 async def main():
-    print("🚀 Бот и планировщик запущены")
-
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(send_daily_reminders, 'cron', minute='*')  # каждую минуту
+    scheduler.add_job(send_local_reminders, 'interval', minutes=1)
     scheduler.start()
-
+    print("🚀 Бот запущен")
     await dp.start_polling(bot)
 
 

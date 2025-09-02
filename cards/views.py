@@ -7,10 +7,9 @@ from django.utils import timezone
 from django.contrib.auth.models import User
 from .models import Card, Schedule, UserStats
 import json
+from gtts import gTTS
+import io
 
-# ===========================
-# Главная и регистрация
-# ===========================
 
 def home(request):
     if request.user.is_authenticated:
@@ -19,15 +18,11 @@ def home(request):
 
 
 def register(request):
-    """
-    Регистрация нового пользователя
-    """
     if request.method == "POST":
         form = UserCreationForm(request.POST)
         if form.is_valid():
             user = form.save()
             login(request, user)
-            # Создаём UserStats для нового пользователя
             UserStats.objects.get_or_create(user=user)
             return redirect('cards:card_list')
     else:
@@ -35,48 +30,48 @@ def register(request):
     return render(request, 'register.html', {"form": form})
 
 
-# ===========================
-# Работа с карточками
-# ===========================
-
 @login_required
 def card_list(request):
-    """
-    Список всех карточек с фильтрацией по уровню
-    """
     level = request.GET.get('level')
     cards = Card.objects.filter(owner=request.user)
     if level in ['beginner', 'intermediate', 'advanced']:
         cards = cards.filter(level=level)
-    
+
+    # 🔁 Единая логика для карточек на повторении
+    now = timezone.now()
     due_cards = Card.objects.filter(
         owner=request.user,
-        schedule__next_review__lte=timezone.now()
+        schedule__next_review__lte=now
     )
+    due_count = due_cards.count()
 
-    # Подсчёт статистики
     total_cards = cards.count()
     beginner_count = cards.filter(level='beginner').count()
     intermediate_count = cards.filter(level='intermediate').count()
     advanced_count = cards.filter(level='advanced').count()
-    due_count = due_cards.count()
 
-    return render(request, 'cards/card_list.html', {
+    # Ближайшее будущее повторение
+    next_card = Card.objects.filter(
+        owner=request.user,
+        schedule__next_review__gt=now
+    ).order_by('schedule__next_review').first()
+
+    context = {
         'cards': cards,
-        'due_cards': due_cards,
+        'due_count': due_count,
         'total_cards': total_cards,
         'beginner_count': beginner_count,
         'intermediate_count': intermediate_count,
         'advanced_count': advanced_count,
-        'due_count': due_count
-    })
+        'next_review': next_card.schedule.next_review if next_card else None,
+        'current_time': now,
+    }
+
+    return render(request, 'cards/card_list.html', context)
 
 
 @login_required
 def add_card(request):
-    """
-    Добавление новой карточки
-    """
     if request.method == "POST":
         word = request.POST.get('word')
         translation = request.POST.get('translation')
@@ -93,7 +88,6 @@ def add_card(request):
                 note=note,
                 level=level
             )
-            # Создаём расписание
             Schedule.objects.create(card=card)
             return redirect('cards:card_list')
     return render(request, 'cards/card_form.html')
@@ -101,9 +95,6 @@ def add_card(request):
 
 @login_required
 def edit_card(request, card_id):
-    """
-    Редактирование карточки
-    """
     card = get_object_or_404(Card, id=card_id, owner=request.user)
     if request.method == "POST":
         card.word = request.POST.get('word')
@@ -116,21 +107,46 @@ def edit_card(request, card_id):
     return render(request, 'cards/card_form.html', {'card': card})
 
 
-# ===========================
-# Режим повторения
-# ===========================
+@login_required
+def delete_card(request, card_id):
+    """
+    Удаление карточки
+    """
+    card = get_object_or_404(Card, id=card_id, owner=request.user)
+    if request.method == "POST":
+        card.delete()
+        return redirect('cards:card_list')
+    return render(request, 'cards/delete_confirm.html', {'card': card})
+
+
+def say_word(request, word):
+    try:
+        tts = gTTS(text=word, lang='en')
+        audio_io = io.BytesIO()
+        tts.write_to_fp(audio_io)
+        audio_io.seek(0)
+        response = HttpResponse(audio_io.read(), content_type='audio/mpeg')
+        response['Content-Disposition'] = f'inline; filename="{word}.mp3"'
+        return response
+    except Exception as e:
+        return HttpResponse("Error", status=500)
+
 
 @login_required
 def review(request):
-    """
-    Повторение слов на сегодня
-    """
+    # 🔁 Точная и единая проверка
+    now = timezone.now()
     due_cards = Card.objects.filter(
         owner=request.user,
-        schedule__next_review__lte=timezone.now()
+        schedule__next_review__lte=now
     ).order_by('schedule__next_review')
 
-    if not due_cards:
+    # 🔍 Отладка (временно — можно убрать)
+    print(f"[DEBUG] Текущее время: {now}")
+    for card in due_cards:
+        print(f"[DEBUG] На повторении: {card.word} → {card.schedule.next_review}")
+
+    if not due_cards.exists():
         return render(request, 'cards/review_done.html')
 
     card = due_cards.first()
@@ -139,16 +155,10 @@ def review(request):
 
 @login_required
 def review_answer(request, card_id, difficulty):
-    """
-    Обработка ответа на повторение
-    """
     card = get_object_or_404(Card, id=card_id, owner=request.user)
     schedule = card.schedule
-
-    # Обновляем расписание
     schedule.update_schedule(difficulty)
 
-    # Обновляем статистику пользователя
     user_stats = request.user.userstats
     user_stats.last_reviewed = timezone.now()
     user_stats.review_streak += 1
@@ -157,15 +167,8 @@ def review_answer(request, card_id, difficulty):
     return redirect('cards:review')
 
 
-# ===========================
-# Экспорт / Импорт
-# ===========================
-
 @login_required
 def export_cards(request):
-    """
-    Экспорт карточек в JSON
-    """
     cards = Card.objects.filter(owner=request.user).values(
         'word', 'translation', 'example', 'note', 'level'
     )
@@ -180,9 +183,6 @@ def export_cards(request):
 
 @login_required
 def import_cards(request):
-    """
-    Импорт карточек из JSON
-    """
     if request.method == 'POST' and request.FILES.get('file'):
         file = request.FILES['file']
         try:
@@ -203,5 +203,4 @@ def import_cards(request):
             return render(request, 'cards/import_success.html', {'imported': imported})
         except Exception as e:
             return render(request, 'cards/import_error.html', {'error': str(e)})
-
     return render(request, 'cards/import_form.html')
